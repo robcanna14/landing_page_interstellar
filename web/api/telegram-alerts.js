@@ -354,7 +354,10 @@ async function loadData(cfg) {
     SELECT
       event,
       timestamp,
-      properties['alert_key'] AS alert_key
+      properties['alert_key'] AS alert_key,
+      properties['alert_type'] AS alert_type,
+      properties['day'] AS day,
+      properties['person_number'] AS person_number
     FROM events
     WHERE event IN ('${ALERT_EVENT}', '${CHECK_EVENT}')
       AND timestamp >= ${time.monthStart}
@@ -415,7 +418,7 @@ function usageAlertsToSend(usage, sentAlertKeys) {
     .filter(Boolean);
 }
 
-function newPersonAlertsToSend(sessions, sentAlertKeys, firstCheckAt, lookbackMinutes) {
+function newPersonAlertsToSend(sessions, sentAlertKeys, sentPersonNumbers, firstCheckAt, lookbackMinutes) {
   const day = todayKey();
   const lookbackStartMs = Date.now() - Math.max(5, lookbackMinutes || 30) * 60 * 1000;
   const firstCheckMs = firstCheckAt ? new Date(firstCheckAt).getTime() : 0;
@@ -424,8 +427,17 @@ function newPersonAlertsToSend(sessions, sentAlertKeys, firstCheckAt, lookbackMi
   return sessions
     .filter((session) => session.startMs >= minStartMs)
     .map((session) => {
-      const alertKey = `person:${day}:${session.key}`;
-      if (sentAlertKeys.has(alertKey)) return null;
+      const alertKey = `person:${day}:number:${session.personNumber}`;
+      const legacyAlertKey = `person:${day}:${session.key}`;
+      const personNumberKey = `${day}:${session.personNumber}`;
+
+      if (
+        sentAlertKeys.has(alertKey) ||
+        sentAlertKeys.has(legacyAlertKey) ||
+        sentPersonNumbers.has(personNumberKey)
+      ) {
+        return null;
+      }
 
       return {
         alertKey,
@@ -478,6 +490,11 @@ export default async function handler(req, res) {
     const sentAlertKeys = new Set(
       data.technicalEvents.map((row) => row.alert_key).filter(Boolean),
     );
+    const sentPersonNumbers = new Set(
+      data.technicalEvents
+        .filter((row) => row.alert_type === "new_person" && row.day && row.person_number)
+        .map((row) => `${row.day}:${Number(row.person_number)}`),
+    );
     const checkTimestamps = data.technicalEvents
       .filter((row) => row.event === CHECK_EVENT)
       .map((row) => row.timestamp)
@@ -489,6 +506,7 @@ export default async function handler(req, res) {
       ...newPersonAlertsToSend(
         data.sessions,
         sentAlertKeys,
+        sentPersonNumbers,
         firstCheckAt,
         cfg.newPersonLookbackMinutes,
       ),
