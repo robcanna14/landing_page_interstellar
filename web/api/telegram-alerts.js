@@ -4,7 +4,7 @@ const DEFAULT_PROJECT_ID = "200919";
 const EVENT_LIMIT = 1_000_000;
 const REPLAY_LIMIT = 5_000;
 const ALERT_EVENT = "guardian_telegram_alert_sent";
-const CHECK_EVENT = "guardian_telegram_alert_checked";
+const CHECK_EVENT = "guardian_telegram_alert_checked_v2";
 
 function env(name, fallback = "") {
   return String(process.env[name] || fallback).trim();
@@ -338,11 +338,11 @@ function usageAlertsToSend(usage, sentAlertKeys) {
     .filter(Boolean);
 }
 
-function newPersonAlertsToSend(sessions, sentAlertKeys, lastCheckAt, lookbackMinutes) {
+function newPersonAlertsToSend(sessions, sentAlertKeys, firstCheckAt, lookbackMinutes) {
   const day = todayKey();
   const lookbackStartMs = Date.now() - Math.max(5, lookbackMinutes || 30) * 60 * 1000;
-  const lastCheckMs = lastCheckAt ? new Date(lastCheckAt).getTime() : 0;
-  const minStartMs = lastCheckMs ? Math.max(lookbackStartMs, lastCheckMs) : Infinity;
+  const firstCheckMs = firstCheckAt ? new Date(firstCheckAt).getTime() : 0;
+  const minStartMs = firstCheckMs ? Math.max(lookbackStartMs, firstCheckMs) : Infinity;
 
   return sessions
     .filter((session) => session.startMs >= minStartMs)
@@ -401,17 +401,18 @@ export default async function handler(req, res) {
     const sentAlertKeys = new Set(
       data.technicalEvents.map((row) => row.alert_key).filter(Boolean),
     );
-    const lastCheckAt = data.technicalEvents
+    const checkTimestamps = data.technicalEvents
       .filter((row) => row.event === CHECK_EVENT)
       .map((row) => row.timestamp)
-      .sort()
-      .at(-1);
+      .sort();
+    const firstCheckAt = checkTimestamps[0];
+    const lastCheckAt = checkTimestamps.at(-1);
     const alerts = [
       ...usageAlertsToSend(data.usage, sentAlertKeys),
       ...newPersonAlertsToSend(
         data.sessions,
         sentAlertKeys,
-        lastCheckAt,
+        firstCheckAt,
         cfg.newPersonLookbackMinutes,
       ),
     ];
