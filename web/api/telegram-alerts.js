@@ -4,6 +4,7 @@ const DEFAULT_PROJECT_ID = "200919";
 const EVENT_LIMIT = 1_000_000;
 const REPLAY_LIMIT = 5_000;
 const ALERT_EVENT = "guardian_telegram_alert_sent";
+const CHECK_EVENT = "guardian_telegram_alert_checked";
 
 function env(name, fallback = "") {
   return String(process.env[name] || fallback).trim();
@@ -99,6 +100,30 @@ async function captureAlertSent(cfg, alertKey, properties = {}) {
   }
 }
 
+async function captureCheck(cfg) {
+  if (!cfg.posthogProjectApiKey) {
+    throw new Error("POSTHOG_PROJECT_API_KEY mancante.");
+  }
+
+  const response = await fetch(`${cfg.posthogIngestHost}/capture/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: cfg.posthogProjectApiKey,
+      event: CHECK_EVENT,
+      distinct_id: "guardiano-interstellar-cloud",
+      properties: {
+        source: "vercel-cronjob-org",
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`PostHog check capture ${response.status}: ${body.slice(0, 500)}`);
+  }
+}
+
 async function sendTelegram(cfg, text) {
   if (!cfg.telegramBotToken || !cfg.telegramChatId) {
     throw new Error("TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID mancante.");
@@ -162,6 +187,11 @@ function numericMax(...values) {
   );
 }
 
+function isItaly(value) {
+  const country = String(value || "").trim().toLowerCase();
+  return country === "italy" || country === "italia" || country === "it";
+}
+
 function groupSessions(events) {
   const groups = new Map();
   const chronological = [...events].sort(
@@ -181,6 +211,7 @@ function groupSessions(events) {
         endMs: timestamp,
         pageviews: 0,
         maxScroll: 0,
+        country: "",
       });
     }
 
@@ -197,6 +228,7 @@ function groupSessions(events) {
     }
 
     if (row.event === "$pageview") session.pageviews += 1;
+    session.country = session.country || row.paese || "";
     session.maxScroll = numericMax(
       session.maxScroll,
       row.soglia_scroll,
@@ -206,7 +238,7 @@ function groupSessions(events) {
   }
 
   return [...groups.values()]
-    .filter((session) => session.pageviews > 0)
+    .filter((session) => session.pageviews > 0 && isItaly(session.country))
     .sort((a, b) => a.startMs - b.startMs)
     .map((session, index) => ({
       ...session,
@@ -222,12 +254,14 @@ async function loadData(cfg) {
       distinct_id,
       properties['$session_id'] AS session_id,
       properties['$window_id'] AS window_id,
+      properties['$geoip_country_name'] AS paese,
       properties['threshold'] AS soglia_scroll,
       properties['scroll_depth'] AS scroll,
       properties['max_scroll_depth'] AS scroll_massimo
     FROM events
     WHERE timestamp >= today()
       AND event != '${ALERT_EVENT}'
+      AND event != '${CHECK_EVENT}'
     ORDER BY timestamp ASC
     LIMIT 5000
   `;
@@ -242,9 +276,11 @@ async function loadData(cfg) {
 
   const sentAlertsQuery = `
     SELECT
+      event,
+      timestamp,
       properties['alert_key'] AS alert_key
     FROM events
-    WHERE event = '${ALERT_EVENT}'
+    WHERE event IN ('${ALERT_EVENT}', '${CHECK_EVENT}')
       AND timestamp >= toStartOfMonth(now())
     LIMIT 10000
   `;
@@ -258,7 +294,7 @@ async function loadData(cfg) {
   return {
     sessions: groupSessions(rowsFromResult(todayEventsResult)),
     usage: rowsFromResult(usageResult)[0] || {},
-    sentAlertKeys: new Set(rowsFromResult(sentAlertsResult).map((row) => row.alert_key).filter(Boolean)),
+    technicalEvents: rowsFromResult(sentAlertsResult),
   };
 }
 
@@ -302,9 +338,11 @@ function usageAlertsToSend(usage, sentAlertKeys) {
     .filter(Boolean);
 }
 
-function newPersonAlertsToSend(sessions, sentAlertKeys, lookbackMinutes) {
+function newPersonAlertsToSend(sessions, sentAlertKeys, lastCheckAt, lookbackMinutes) {
   const day = todayKey();
-  const minStartMs = Date.now() - Math.max(5, lookbackMinutes || 30) * 60 * 1000;
+  const lookbackStartMs = Date.now() - Math.max(5, lookbackMinutes || 30) * 60 * 1000;
+  const lastCheckMs = lastCheckAt ? new Date(lastCheckAt).getTime() : 0;
+  const minStartMs = lastCheckMs ? Math.max(lookbackStartMs, lastCheckMs) : Infinity;
 
   return sessions
     .filter((session) => session.startMs >= minStartMs)
@@ -360,19 +398,32 @@ export default async function handler(req, res) {
 
   try {
     const data = await loadData(cfg);
+    const sentAlertKeys = new Set(
+      data.technicalEvents.map((row) => row.alert_key).filter(Boolean),
+    );
+    const lastCheckAt = data.technicalEvents
+      .filter((row) => row.event === CHECK_EVENT)
+      .map((row) => row.timestamp)
+      .sort()
+      .at(-1);
     const alerts = [
-      ...usageAlertsToSend(data.usage, data.sentAlertKeys),
+      ...usageAlertsToSend(data.usage, sentAlertKeys),
       ...newPersonAlertsToSend(
         data.sessions,
-        data.sentAlertKeys,
+        sentAlertKeys,
+        lastCheckAt,
         cfg.newPersonLookbackMinutes,
       ),
     ];
     const result = await sendAlerts(cfg, alerts);
+    if (!result.failed.length) {
+      await captureCheck(cfg);
+    }
 
-    return json(res, result.failed.length ? 207 : 200, {
+    return json(res, result.failed.length ? 500 : 200, {
       ok: result.failed.length === 0,
       checked_at: new Date().toISOString(),
+      last_check_at: lastCheckAt || null,
       alerts_found: alerts.length,
       alerts_sent: result.sent.length,
       sent: result.sent,
