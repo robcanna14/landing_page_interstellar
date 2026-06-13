@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { captureLandingEvent } from "../lib/posthog";
 
 const IS_SSR = typeof window === "undefined";
 
@@ -7,6 +8,10 @@ const WHATSAPP_NUMBERS = ["3913616734", "3296849150", "3924727326"];
 function openWhatsApp() {
   if (IS_SSR) return;
   const n = WHATSAPP_NUMBERS[Math.floor(Math.random() * WHATSAPP_NUMBERS.length)];
+  captureLandingEvent("whatsapp_click", {
+    whatsapp_number: n,
+    pathname: window.location.pathname,
+  });
   window.open(`https://wa.me/${n}`, "_blank");
 }
 
