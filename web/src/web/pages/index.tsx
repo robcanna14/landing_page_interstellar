@@ -1,18 +1,33 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { captureLandingEvent } from "../lib/posthog";
 
 const IS_SSR = typeof window === "undefined";
 
 const WHATSAPP_NUMBERS = ["3913616734", "3296849150", "3924727326"];
 
-function openWhatsApp() {
+function normalizeWhatsAppNumber(number: string) {
+  const clean = number.replace(/\D/g, "");
+  return clean.length === 10 && clean.startsWith("3") ? `39${clean}` : clean;
+}
+
+function getWhatsAppTarget() {
+  const localNumber = WHATSAPP_NUMBERS[Math.floor(Math.random() * WHATSAPP_NUMBERS.length)];
+  const whatsappNumber = normalizeWhatsAppNumber(localNumber);
+
+  return {
+    localNumber,
+    whatsappNumber,
+    href: `https://api.whatsapp.com/send?phone=${whatsappNumber}`,
+  };
+}
+
+function trackWhatsAppClick(localNumber: string, whatsappNumber: string) {
   if (IS_SSR) return;
-  const n = WHATSAPP_NUMBERS[Math.floor(Math.random() * WHATSAPP_NUMBERS.length)];
   captureLandingEvent("whatsapp_click", {
-    whatsapp_number: n,
+    whatsapp_number: localNumber,
+    whatsapp_number_international: whatsappNumber,
     pathname: window.location.pathname,
   });
-  window.open(`https://wa.me/${n}`, "_blank");
 }
 
 /* ────────────────────────────────────────────
@@ -300,28 +315,37 @@ function NeonSpotlight() {
 function WAButton({ label = "Scrivici su WhatsApp", size = "md", ghost = false }: {
   label?: string; size?: "md" | "lg"; ghost?: boolean;
 }) {
+  const target = useMemo(getWhatsAppTarget, []);
   const pad = size === "lg" ? "px-8 py-4 text-[0.95rem]" : "px-6 py-3.5 text-sm";
   if (ghost) {
     return (
-      <button onClick={openWhatsApp}
+      <a
+        href={target.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={() => trackWhatsAppClick(target.localNumber, target.whatsappNumber)}
         className={`inline-flex items-center gap-2.5 font-semibold rounded-xl cursor-pointer transition-all duration-200 ${pad}`}
         style={{ border: "1px solid rgba(255,255,255,0.14)", color: "rgba(255,255,255,0.6)", background: "transparent" }}
-        onMouseEnter={e => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = "rgba(255,255,255,0.28)"; b.style.color = "#fff"; }}
-        onMouseLeave={e => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = "rgba(255,255,255,0.14)"; b.style.color = "rgba(255,255,255,0.6)"; }}
+        onMouseEnter={e => { const b = e.currentTarget as HTMLAnchorElement; b.style.borderColor = "rgba(255,255,255,0.28)"; b.style.color = "#fff"; }}
+        onMouseLeave={e => { const b = e.currentTarget as HTMLAnchorElement; b.style.borderColor = "rgba(255,255,255,0.14)"; b.style.color = "rgba(255,255,255,0.6)"; }}
       >
         <WAIcon /> {label}
-      </button>
+      </a>
     );
   }
   return (
-    <button onClick={openWhatsApp}
+    <a
+      href={target.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={() => trackWhatsAppClick(target.localNumber, target.whatsappNumber)}
       className={`inline-flex items-center gap-2.5 font-semibold rounded-xl cursor-pointer border-0 transition-all duration-200 ${pad}`}
       style={{ background: "#25d366", color: "#fff" }}
-      onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "#1fb85a"; }}
-      onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "#25d366"; }}
+      onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.background = "#1fb85a"; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.background = "#25d366"; }}
     >
       <WAIcon /> {label}
-    </button>
+    </a>
   );
 }
 
