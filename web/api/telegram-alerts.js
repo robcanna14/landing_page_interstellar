@@ -5,6 +5,7 @@ const EVENT_LIMIT = 1_000_000;
 const REPLAY_LIMIT = 5_000;
 const ALERT_EVENT = "guardian_telegram_alert_sent";
 const CHECK_EVENT = "guardian_telegram_alert_checked_v2";
+const ROME_TIME_ZONE = "Europe/Rome";
 
 function env(name, fallback = "") {
   return String(process.env[name] || fallback).trim();
@@ -149,7 +150,7 @@ async function sendTelegram(cfg, text) {
 function italyDateParts(date = new Date()) {
   return Object.fromEntries(
     new Intl.DateTimeFormat("en", {
-      timeZone: "Europe/Rome",
+      timeZone: ROME_TIME_ZONE,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -157,6 +158,78 @@ function italyDateParts(date = new Date()) {
       .formatToParts(date)
       .map((part) => [part.type, part.value]),
   );
+}
+
+function italyDateTimeParts(date = new Date()) {
+  return Object.fromEntries(
+    new Intl.DateTimeFormat("en", {
+      timeZone: ROME_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value]),
+  );
+}
+
+function timeZoneOffsetMs(date) {
+  const parts = italyDateTimeParts(date);
+  const asUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  );
+  return asUtc - date.getTime();
+}
+
+function zonedDateTimeToUtc({ year, month, day, hour = 0, minute = 0, second = 0 }) {
+  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  const firstOffset = timeZoneOffsetMs(utcGuess);
+  const firstUtc = new Date(utcGuess.getTime() - firstOffset);
+  const secondOffset = timeZoneOffsetMs(firstUtc);
+  return new Date(utcGuess.getTime() - secondOffset);
+}
+
+function addDaysToDateParts(parts, days) {
+  const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + days));
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+  };
+}
+
+function hogqlDateTime(date) {
+  return `toDateTime('${date.toISOString().slice(0, 19).replace("T", " ")}', 'UTC')`;
+}
+
+function getTimeWindows() {
+  const today = italyDateParts();
+  const todayParts = {
+    year: Number(today.year),
+    month: Number(today.month),
+    day: Number(today.day),
+  };
+  const tomorrowParts = addDaysToDateParts(todayParts, 1);
+  const monthStartParts = { ...todayParts, day: 1 };
+  const nextMonthStartParts = todayParts.month === 12
+    ? { year: todayParts.year + 1, month: 1, day: 1 }
+    : { year: todayParts.year, month: todayParts.month + 1, day: 1 };
+
+  return {
+    todayStart: hogqlDateTime(zonedDateTimeToUtc(todayParts)),
+    tomorrowStart: hogqlDateTime(zonedDateTimeToUtc(tomorrowParts)),
+    monthStart: hogqlDateTime(zonedDateTimeToUtc(monthStartParts)),
+    nextMonthStart: hogqlDateTime(zonedDateTimeToUtc(nextMonthStartParts)),
+  };
 }
 
 function todayKey() {
@@ -247,6 +320,7 @@ function groupSessions(events) {
 }
 
 async function loadData(cfg) {
+  const time = getTimeWindows();
   const todayEventsQuery = `
     SELECT
       timestamp,
@@ -259,7 +333,8 @@ async function loadData(cfg) {
       properties['scroll_depth'] AS scroll,
       properties['max_scroll_depth'] AS scroll_massimo
     FROM events
-    WHERE timestamp >= today()
+    WHERE timestamp >= ${time.todayStart}
+      AND timestamp < ${time.tomorrowStart}
       AND event != '${ALERT_EVENT}'
       AND event != '${CHECK_EVENT}'
     ORDER BY timestamp ASC
@@ -271,7 +346,8 @@ async function loadData(cfg) {
       count() AS eventi_mese,
       count(DISTINCT if(properties['$has_recording'] = true OR properties['$recording_status'] IN ('active', 'sampled', 'recording'), properties['$session_id'], null)) AS replay_mese
     FROM events
-    WHERE timestamp >= toStartOfMonth(now())
+    WHERE timestamp >= ${time.monthStart}
+      AND timestamp < ${time.nextMonthStart}
   `;
 
   const sentAlertsQuery = `
@@ -281,7 +357,8 @@ async function loadData(cfg) {
       properties['alert_key'] AS alert_key
     FROM events
     WHERE event IN ('${ALERT_EVENT}', '${CHECK_EVENT}')
-      AND timestamp >= toStartOfMonth(now())
+      AND timestamp >= ${time.monthStart}
+      AND timestamp < ${time.nextMonthStart}
     LIMIT 10000
   `;
 
