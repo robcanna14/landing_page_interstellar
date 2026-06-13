@@ -13,11 +13,15 @@ function normalizeWhatsAppNumber(number: string) {
 function getWhatsAppTarget() {
   const localNumber = WHATSAPP_NUMBERS[Math.floor(Math.random() * WHATSAPP_NUMBERS.length)];
   const whatsappNumber = normalizeWhatsAppNumber(localNumber);
+  const isTikTokBrowser = !IS_SSR && /tiktok|musical_ly|bytedance|trill/i.test(window.navigator.userAgent);
 
   return {
     localNumber,
     whatsappNumber,
-    href: `https://api.whatsapp.com/send?phone=${whatsappNumber}`,
+    href: isTikTokBrowser
+      ? `/whatsapp?phone=${encodeURIComponent(whatsappNumber)}`
+      : `https://api.whatsapp.com/send?phone=${whatsappNumber}`,
+    target: isTikTokBrowser ? "_self" : "_blank",
   };
 }
 
@@ -321,7 +325,7 @@ function WAButton({ label = "Scrivici su WhatsApp", size = "md", ghost = false }
     return (
       <a
         href={target.href}
-        target="_blank"
+        target={target.target}
         rel="noopener noreferrer"
         onClick={() => trackWhatsAppClick(target.localNumber, target.whatsappNumber)}
         className={`inline-flex items-center gap-2.5 font-semibold rounded-xl cursor-pointer transition-all duration-200 ${pad}`}
@@ -336,7 +340,7 @@ function WAButton({ label = "Scrivici su WhatsApp", size = "md", ghost = false }
   return (
     <a
       href={target.href}
-      target="_blank"
+      target={target.target}
       rel="noopener noreferrer"
       onClick={() => trackWhatsAppClick(target.localNumber, target.whatsappNumber)}
       className={`inline-flex items-center gap-2.5 font-semibold rounded-xl cursor-pointer border-0 transition-all duration-200 ${pad}`}
