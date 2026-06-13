@@ -50,7 +50,7 @@ function installLandingEvents() {
     const maxScrollable =
       documentElement.scrollHeight - documentElement.clientHeight;
 
-    if (maxScrollable <= 0) return 100;
+    if (maxScrollable <= 0) return 0;
 
     return Math.min(
       100,
@@ -88,7 +88,7 @@ function installLandingEvents() {
 
   window.addEventListener("scroll", trackScrollDepth, { passive: true });
   window.addEventListener("resize", trackScrollDepth);
-  window.requestAnimationFrame(trackScrollDepth);
+  window.setTimeout(trackScrollDepth, 1000);
 
   window.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "hidden") return;
