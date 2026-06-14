@@ -14,8 +14,14 @@ const PROBABLY_ENDED_AFTER_MS = 5 * 60 * 1000;
 let initialized = false;
 let landingEventsInstalled = false;
 
+function isLandingPage() {
+  if (typeof window === "undefined") return false;
+  return window.location.pathname === "/";
+}
+
 export function initPostHog() {
   if (typeof window === "undefined" || initialized || !POSTHOG_KEY) return;
+  if (!isLandingPage()) return;
 
   initialized = true;
 

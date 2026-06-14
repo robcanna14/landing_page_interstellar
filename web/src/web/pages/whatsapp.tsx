@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
-import { captureLandingEvent } from "../lib/posthog";
+import { useMemo, useState } from "react";
 
 const DEFAULT_NUMBER = "393296849150";
 const VALID_NUMBERS = new Set(["393913616734", "393296849150", "393924727326"]);
@@ -23,28 +22,9 @@ export default function WhatsAppFallback() {
   const [copied, setCopied] = useState(false);
   const whatsappUrl = `https://api.whatsapp.com/send?phone=${phone}`;
 
-  useEffect(() => {
-    captureLandingEvent("whatsapp_fallback_view", {
-      whatsapp_number_international: phone,
-      pathname: "/whatsapp",
-    });
-  }, [phone]);
-
   async function copyNumber() {
     await navigator.clipboard.writeText(formatItalianNumber(phone));
     setCopied(true);
-    captureLandingEvent("whatsapp_fallback_copy", {
-      whatsapp_number_international: phone,
-      pathname: "/whatsapp",
-    });
-  }
-
-  function trackOpen(method: string) {
-    captureLandingEvent("whatsapp_open_attempt", {
-      method,
-      whatsapp_number_international: phone,
-      pathname: "/whatsapp",
-    });
   }
 
   return (
@@ -74,7 +54,6 @@ export default function WhatsAppFallback() {
             href={whatsappUrl}
             target="_blank"
             rel="noopener noreferrer"
-            onClick={() => trackOpen("api_whatsapp")}
             className="text-center rounded-xl px-5 py-4 font-semibold bg-[#25d366] text-white transition-colors hover:bg-[#1fb85a]"
           >
             Apri WhatsApp
