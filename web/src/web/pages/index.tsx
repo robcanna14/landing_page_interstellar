@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { captureLandingEvent } from "../lib/posthog";
 
 const IS_SSR = typeof window === "undefined";
@@ -23,6 +23,15 @@ function getWhatsAppTarget() {
       : `https://api.whatsapp.com/send?phone=${whatsappNumber}`,
     target: isTikTokBrowser ? "_self" : "_blank",
   };
+}
+
+type WhatsAppTarget = ReturnType<typeof getWhatsAppTarget>;
+
+const WhatsAppTargetContext = createContext<WhatsAppTarget | null>(null);
+
+function useWhatsAppTarget() {
+  const target = useContext(WhatsAppTargetContext);
+  return target ?? getWhatsAppTarget();
 }
 
 function trackWhatsAppClick(localNumber: string, whatsappNumber: string) {
@@ -319,7 +328,7 @@ function NeonSpotlight() {
 function WAButton({ label = "Scrivici su WhatsApp", size = "md", ghost = false }: {
   label?: string; size?: "md" | "lg"; ghost?: boolean;
 }) {
-  const target = useMemo(getWhatsAppTarget, []);
+  const target = useWhatsAppTarget();
   const pad = size === "lg" ? "px-8 py-4 text-[0.95rem]" : "px-6 py-3.5 text-sm";
   if (ghost) {
     return (
@@ -468,6 +477,7 @@ function Cosmograph() {
 ═══════════════════════════════════════════ */
 export default function Index() {
   const [scrolled, setScrolled] = useState(false);
+  const whatsappTarget = useMemo(getWhatsAppTarget, []);
   useEffect(() => {
     if (IS_SSR) return;
     const h = () => setScrolled(window.scrollY > 40);
@@ -476,6 +486,7 @@ export default function Index() {
   }, []);
 
   return (
+    <WhatsAppTargetContext.Provider value={whatsappTarget}>
     <div style={{ minHeight: "100vh", background: "#020408", color: "#fff", fontFamily: "'Inter','Helvetica Neue',system-ui,sans-serif", overflowX: "hidden" as const }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@300;400;500;600&display=swap');
@@ -1059,5 +1070,6 @@ export default function Index() {
 
 
     </div>
+    </WhatsAppTargetContext.Provider>
   );
 }
