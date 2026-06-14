@@ -18,11 +18,37 @@ function formatItalianNumber(value: string) {
   return `+39 ${local.slice(0, 3)} ${local.slice(3, 6)} ${local.slice(6)}`;
 }
 
+function getFallbackPageUrl(phone: string) {
+  if (typeof window === "undefined") {
+    return `https://interstellartrading.website/whatsapp?phone=${phone}`;
+  }
+  return `${window.location.origin}/whatsapp?phone=${encodeURIComponent(phone)}`;
+}
+
+function getExternalBrowserUrl(pageUrl: string) {
+  if (typeof window === "undefined") return pageUrl;
+
+  const userAgent = window.navigator.userAgent;
+  const withoutProtocol = pageUrl.replace(/^https?:\/\//, "");
+
+  if (/android/i.test(userAgent)) {
+    return `intent://${withoutProtocol}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(pageUrl)};end`;
+  }
+
+  if (/iphone|ipad|ipod/i.test(userAgent)) {
+    return pageUrl.replace(/^https:\/\//, "googlechromes://").replace(/^http:\/\//, "googlechrome://");
+  }
+
+  return pageUrl;
+}
+
 export default function WhatsAppFallback() {
   const phone = useMemo(getPhoneFromUrl, []);
   const [copied, setCopied] = useState(false);
+  const [browserHint, setBrowserHint] = useState(false);
   const whatsappUrl = `https://api.whatsapp.com/send?phone=${phone}`;
-  const appUrl = `whatsapp://send?phone=${phone}`;
+  const fallbackPageUrl = useMemo(() => getFallbackPageUrl(phone), [phone]);
+  const externalBrowserUrl = useMemo(() => getExternalBrowserUrl(fallbackPageUrl), [fallbackPageUrl]);
 
   useEffect(() => {
     captureLandingEvent("whatsapp_fallback_view", {
@@ -48,6 +74,11 @@ export default function WhatsAppFallback() {
     });
   }
 
+  function trackExternalBrowser() {
+    trackOpen("external_browser");
+    window.setTimeout(() => setBrowserHint(true), 900);
+  }
+
   return (
     <main className="min-h-screen text-white bg-[#03070d] flex items-center justify-center px-5 py-10">
       <div className="absolute inset-0 opacity-60 pointer-events-none" style={{
@@ -62,7 +93,7 @@ export default function WhatsAppFallback() {
           Contattaci su WhatsApp
         </h1>
         <p className="text-white/70 leading-relaxed mb-6">
-          TikTok a volte blocca l'apertura automatica di WhatsApp. Puoi aprirlo da qui oppure copiare il numero.
+          TikTok a volte blocca l'apertura automatica di WhatsApp. Puoi provare da qui, aprire la pagina nel browser oppure copiare il numero.
         </p>
 
         <div className="rounded-xl border border-white/10 bg-black/25 p-4 mb-5">
@@ -81,11 +112,11 @@ export default function WhatsAppFallback() {
             Apri WhatsApp
           </a>
           <a
-            href={appUrl}
-            onClick={() => trackOpen("whatsapp_app")}
+            href={externalBrowserUrl}
+            onClick={trackExternalBrowser}
             className="text-center rounded-xl px-5 py-4 font-semibold border border-white/12 text-white/85 transition-colors hover:border-white/25 hover:text-white"
           >
-            Prova ad aprire l'app
+            Apri nel browser
           </a>
           <button
             type="button"
@@ -95,6 +126,12 @@ export default function WhatsAppFallback() {
             {copied ? "Numero copiato" : "Copia numero"}
           </button>
         </div>
+
+        {browserHint && (
+          <p className="mt-4 text-sm leading-relaxed text-white/45">
+            Se TikTok blocca anche questo pulsante, usa i tre puntini in alto e scegli “Apri nel browser”.
+          </p>
+        )}
 
         <a href="/" className="block mt-6 text-sm text-white/45 hover:text-white/75">
           Torna alla pagina
