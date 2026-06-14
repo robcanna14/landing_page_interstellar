@@ -84,7 +84,7 @@ export default function WhatsAppFallback() {
             onClick={copyNumber}
             className="rounded-xl px-5 py-4 font-semibold border border-white/12 text-white/85 transition-colors hover:border-white/25 hover:text-white"
           >
-            {copied ? "Numero copiato" : "Copia numero"}
+            {copied ? "Numero copiato" : "Clicca qui per copiare numero"}
           </button>
         </div>
 
