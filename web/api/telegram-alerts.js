@@ -6,6 +6,10 @@ const REPLAY_LIMIT = 5_000;
 const ALERT_EVENT = "guardian_telegram_alert_sent";
 const CHECK_EVENT = "guardian_telegram_alert_checked_v2";
 const ROME_TIME_ZONE = "Europe/Rome";
+const MEMORY_TTL_MS = 48 * 60 * 60 * 1000;
+const memorySentAlertKeys = new Map();
+const memorySentSessionKeys = new Map();
+const memorySentPersonNumbers = new Map();
 
 function env(name, fallback = "") {
   return String(process.env[name] || fallback).trim();
@@ -260,6 +264,40 @@ function numericMax(...values) {
   );
 }
 
+function pruneMemoryCache(now = Date.now()) {
+  for (const cache of [memorySentAlertKeys, memorySentSessionKeys, memorySentPersonNumbers]) {
+    for (const [key, timestamp] of cache.entries()) {
+      if (now - timestamp > MEMORY_TTL_MS) cache.delete(key);
+    }
+  }
+}
+
+function rememberAlert(alert) {
+  const now = Date.now();
+  pruneMemoryCache(now);
+  memorySentAlertKeys.set(alert.alertKey, now);
+
+  if (alert.properties?.day && alert.properties?.session_key) {
+    memorySentSessionKeys.set(`${alert.properties.day}:${alert.properties.session_key}`, now);
+  }
+
+  if (alert.properties?.day && alert.properties?.person_number) {
+    memorySentPersonNumbers.set(`${alert.properties.day}:${Number(alert.properties.person_number)}`, now);
+  }
+}
+
+function forgetAlert(alert) {
+  memorySentAlertKeys.delete(alert.alertKey);
+
+  if (alert.properties?.day && alert.properties?.session_key) {
+    memorySentSessionKeys.delete(`${alert.properties.day}:${alert.properties.session_key}`);
+  }
+
+  if (alert.properties?.day && alert.properties?.person_number) {
+    memorySentPersonNumbers.delete(`${alert.properties.day}:${Number(alert.properties.person_number)}`);
+  }
+}
+
 function isItaly(value) {
   const country = String(value || "").trim().toLowerCase();
   return country === "italy" || country === "italia" || country === "it";
@@ -357,6 +395,7 @@ async function loadData(cfg) {
       properties['alert_key'] AS alert_key,
       properties['alert_type'] AS alert_type,
       properties['day'] AS day,
+      properties['session_key'] AS session_key,
       properties['person_number'] AS person_number
     FROM events
     WHERE event IN ('${ALERT_EVENT}', '${CHECK_EVENT}')
@@ -418,7 +457,14 @@ function usageAlertsToSend(usage, sentAlertKeys) {
     .filter(Boolean);
 }
 
-function newPersonAlertsToSend(sessions, sentAlertKeys, sentPersonNumbers, firstCheckAt, lookbackMinutes) {
+function newPersonAlertsToSend(
+  sessions,
+  sentAlertKeys,
+  sentSessionKeys,
+  sentPersonNumbers,
+  firstCheckAt,
+  lookbackMinutes,
+) {
   const day = todayKey();
   const lookbackStartMs = Date.now() - Math.max(5, lookbackMinutes || 30) * 60 * 1000;
   const firstCheckMs = firstCheckAt ? new Date(firstCheckAt).getTime() : 0;
@@ -427,13 +473,17 @@ function newPersonAlertsToSend(sessions, sentAlertKeys, sentPersonNumbers, first
   return sessions
     .filter((session) => session.startMs >= minStartMs)
     .map((session) => {
-      const alertKey = `person:${day}:number:${session.personNumber}`;
+      const alertKey = `person:${day}:session:${session.key}`;
       const legacyAlertKey = `person:${day}:${session.key}`;
+      const legacyNumberAlertKey = `person:${day}:number:${session.personNumber}`;
+      const sessionKey = `${day}:${session.key}`;
       const personNumberKey = `${day}:${session.personNumber}`;
 
       if (
         sentAlertKeys.has(alertKey) ||
         sentAlertKeys.has(legacyAlertKey) ||
+        sentAlertKeys.has(legacyNumberAlertKey) ||
+        sentSessionKeys.has(sessionKey) ||
         sentPersonNumbers.has(personNumberKey)
       ) {
         return null;
@@ -459,11 +509,13 @@ async function sendAlerts(cfg, alerts) {
   const failed = [];
 
   for (const alert of alerts) {
+    rememberAlert(alert);
     try {
       await sendTelegram(cfg, alert.message);
       await captureAlertSent(cfg, alert.alertKey, alert.properties);
       sent.push(alert.alertKey);
     } catch (error) {
+      forgetAlert(alert);
       failed.push({
         alertKey: alert.alertKey,
         error: error.message,
@@ -487,14 +539,23 @@ export default async function handler(req, res) {
 
   try {
     const data = await loadData(cfg);
+    pruneMemoryCache();
     const sentAlertKeys = new Set(
       data.technicalEvents.map((row) => row.alert_key).filter(Boolean),
     );
+    for (const alertKey of memorySentAlertKeys.keys()) sentAlertKeys.add(alertKey);
+    const sentSessionKeys = new Set(
+      data.technicalEvents
+        .filter((row) => row.alert_type === "new_person" && row.day && row.session_key)
+        .map((row) => `${row.day}:${row.session_key}`),
+    );
+    for (const sessionKey of memorySentSessionKeys.keys()) sentSessionKeys.add(sessionKey);
     const sentPersonNumbers = new Set(
       data.technicalEvents
         .filter((row) => row.alert_type === "new_person" && row.day && row.person_number)
         .map((row) => `${row.day}:${Number(row.person_number)}`),
     );
+    for (const personNumber of memorySentPersonNumbers.keys()) sentPersonNumbers.add(personNumber);
     const checkTimestamps = data.technicalEvents
       .filter((row) => row.event === CHECK_EVENT)
       .map((row) => row.timestamp)
@@ -506,6 +567,7 @@ export default async function handler(req, res) {
       ...newPersonAlertsToSend(
         data.sessions,
         sentAlertKeys,
+        sentSessionKeys,
         sentPersonNumbers,
         firstCheckAt,
         cfg.newPersonLookbackMinutes,
